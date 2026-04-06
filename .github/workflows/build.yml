@@ -151,7 +151,6 @@ jobs:
             **/*.log
           retention-days: 7
           if-no-files-found: ignore
-        with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
 
