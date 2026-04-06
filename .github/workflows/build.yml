@@ -170,7 +170,7 @@ jobs:
 
       # 5. 创建用于测试签名的调试密钥
       - name: Create Debug Keystore
-        id: create-keystore
+  
         run: |
           KEYSTORE_DIR="$HOME/.android"
           KEYSTORE_PATH="$KEYSTORE_DIR/debug.keystore"
