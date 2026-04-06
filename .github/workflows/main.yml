@@ -32,7 +32,7 @@ jobs:
     - name: Make gradlew executable
       run: chmod +x gradlew
       
-     - name: Create debug keystore
+    - name: Create debug keystore
       run: |
         if [ ! -f ~/.config/.android/debug.keystore ]
         then
