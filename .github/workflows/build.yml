@@ -1,0 +1,157 @@
+name: Build Nekogram (Test-Signed Release)
+
+on:
+  # 自动触发：推送到主分支或创建标签时
+  push:
+    branches: [ "main", "master" ]
+    tags: [ "v*" ]
+  # 手动触发：在 GitHub Actions 页面手动运行
+  workflow_dispatch:
+
+env:
+  # 核心环境变量，与项目配置严格对齐
+  JAVA_VERSION: '21'                           # 匹配根目录 build.gradle 中的要求
+  ANDROID_COMPILE_SDK: '36'                    # compileSdkVersion
+  ANDROID_BUILD_TOOLS: '36.1.0'                # buildToolsVersion
+  ANDROID_NDK_VERSION: '27.3.13750724'         # ndkVersion
+  CMAKE_VERSION: '3.22.1'                      # 明确指定以解决 CMake 弃用警告
+  APP_MODULE: 'TMessagesProj_App'              # 主应用模块，来自 settings.gradle
+
+jobs:
+  build:
+    name: Build and Sign
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # 1. 获取源代码
+      - name: Checkout code and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      # 2. 设置 Java 环境
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      # 3. 设置 Android 构建环境 (关键：修复 CMake 警告)
+      - name: Setup Android SDK, NDK, and CMake
+        uses: android-actions/setup-android@v3
+        with:
+          api-level: ${{ env.ANDROID_COMPILE_SDK }}
+          build-tools: ${{ env.ANDROID_BUILD_TOOLS }}
+          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
+          cmake-version: ${{ env.CMAKE_VERSION }}
+          add-to-path: true
+
+      # 4. 准备构建脚本
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      # 5. 创建用于测试签名的调试密钥
+      - name: Create Debug Keystore
+        id: create-keystore
+        run: |
+          KEYSTORE_DIR="$HOME/.android"
+          KEYSTORE_PATH="$KEYSTORE_DIR/debug.keystore"
+          mkdir -p "$KEYSTORE_DIR"
+
+          if [ ! -f "$KEYSTORE_PATH" ]; then
+            echo "Generating debug keystore for test signing..."
+            keytool -genkeypair -v \
+              -keystore "$KEYSTORE_PATH" \
+              -alias androiddebugkey \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass android \
+              -keypass android \
+              -dname "CN=Android Debug, O=Android, C=US"
+            echo "Keystore created."
+          else
+            echo "Using existing debug keystore."
+          fi
+          echo "keystore_path=$KEYSTORE_PATH" >> $GITHUB_OUTPUT
+          ls -lh "$KEYSTORE_PATH"
+
+      # 6. 缓存 Gradle 依赖和生成的密钥，加速后续构建
+      - name: Cache Gradle and Android
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.android/debug.keystore
+          key: ${{ runner.os }}-nekogram-${{ hashFiles('**/*.gradle*', '**/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-nekogram-
+
+      # 7. 执行构建：生成测试签名的 Release APK
+      - name: Build Release APK (Test-Signed)
+        id: build-apk
+        run: |
+          echo "Building Release APK with test signing..."
+          ./gradlew :${{ env.APP_MODULE }}:assembleRelease \
+            -Pandroid.injected.signing.store.file=${{ steps.create-keystore.outputs.keystore_path }} \
+            -Pandroid.injected.signing.store.password=android \
+            -Pandroid.injected.signing.key.alias=androiddebugkey \
+            -Pandroid.injected.signing.key.password=android \
+            --stacktrace \
+            --no-daemon
+
+      # 8. 执行构建：生成测试签名的 Release AAB (App Bundle)
+      - name: Build Release AAB (Test-Signed)
+        id: build-aab
+        run: |
+          echo "Building Release AAB (App Bundle) with test signing..."
+          ./gradlew :${{ env.APP_MODULE }}:bundleRelease \
+            -Pandroid.injected.signing.store.file=${{ steps.create-keystore.outputs.keystore_path }} \
+            -Pandroid.injected.signing.store.password=android \
+            -Pandroid.injected.signing.key.alias=androiddebugkey \
+            -Pandroid.injected.signing.key.password=android \
+            --stacktrace \
+            --no-daemon
+
+      # 9. 验证并列出构建产物
+      - name: List and Verify Build Outputs
+        if: success()
+        run: |
+          echo "=== Build Outputs ==="
+          echo "APK files:"
+          find ${{ env.APP_MODULE }}/build/outputs/apk/release -name "*.apk" -exec ls -lh {} \; 2>/dev/null || echo "No APKs found."
+          echo ""
+          echo "AAB files:"
+          find ${{ env.APP_MODULE }}/build/outputs/bundle/release -name "*.aab" -exec ls -lh {} \; 2>/dev/null || echo "No AABs found."
+
+      # 10. 上传生成的 APK 文件
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nekogram-release-apk
+          path: ${{ env.APP_MODULE }}/build/outputs/apk/release/*.apk
+          retention-days: 30
+          if-no-files-found: error
+
+      # 11. 上传生成的 AAB 文件
+      - name: Upload AAB Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nekogram-release-aab
+          path: ${{ env.APP_MODULE }}/build/outputs/bundle/release/*.aab
+          retention-days: 30
+          if-no-files-found: warn
+
+      # 12. 如果构建失败，上传日志以供调试
+      - name: Upload Build Logs on Failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-failure-logs
+          path: |
+            **/build/reports/
+            **/*.log
+          retention-days: 7
