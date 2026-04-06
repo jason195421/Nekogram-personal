@@ -32,12 +32,36 @@ jobs:
     - name: Make gradlew executable
       run: chmod +x gradlew
       
-    - name: Build APK (Debug)
-      run: ./gradlew assembleDebug
-      
-    - name: Build APK (Release)
-      run: ./gradlew assembleRelease
+     - name: Create debug keystore
+      run: |
+        if [ ! -f ~/.config/.android/debug.keystore ]
+        then
+          echo "生成调试签名密钥..."
+          keytool -genkey -v \
+            -keystore ~/.config/.android/debug.keystore \
+            -alias androiddebugkey \
+            -storepass android \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Android Debug, O=Android, C=US"
+          echo "调试密钥已生成并缓存"
+        else
+          echo "使用缓存的调试密钥"
+        fi
+        
+    - name: Build Debug APK (测试签名)
+      run: |
+        ./gradlew assembleDebug assembleRelease
       env:
+        
+        ANDROID_DEBUG_KEYSTORE: ~/.config/.android/debug.keystore
+    
+        ORG_GRADLE_PROJECT_DEBUG_KEY_STORE: ~/.config/.android/debug.keystore
+        ORG_GRADLE_PROJECT_DEBUG_KEY_STORE_PASSWORD: android
+        ORG_GRADLE_PROJECT_DEBUG_KEY_ALIAS: androiddebugkey
+        ORG_GRADLE_PROJECT_DEBUG_KEY_ALIAS_PASSWORD: android
         
     - name: Upload debug APK artifact
       uses: actions/upload-artifact@v4
