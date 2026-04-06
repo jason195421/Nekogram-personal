@@ -31,7 +31,11 @@ jobs:
         
     - name: Make gradlew executable
       run: chmod +x gradlew
-      
+    - name: Prepare env
+      run: |
+        touch local.properties
+        mkdir -p ~/.config/.android
+        ln -s ~/.config/.android ~/.android
     - name: Create debug keystore
       run: |
         if [ ! -f ~/.config/.android/debug.keystore ]
